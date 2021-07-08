@@ -16,26 +16,20 @@ import (
 	"github.com/atotto/clipboard"
 )
 
-var current = ""
-
 const (
 	en_symbol  = "+"
 	de_symbol  = "$"
 	key_symbol = "="
-	times      = 3600
 )
 
 func main() {
 
 	fmt.Printf(`
-时间加密: %s文本，时间解密时限是 %d 秒
-密码加密: %s文本%s密码
-加密后，密文自动写入到剪贴板
+1. Encrypt: input message like "%smessge%spassword", then copy it
+2. Decrypt: add password after last '%s' of ciphertext, then copy it
 
-时间解密: 密文尾部无%s
-密码解密: 密文尾部有%s, 复制密文后在尾部%s后输入密码,然后在复制一次
-解密内容自动写入到剪贴板
-`, en_symbol, times, en_symbol, key_symbol, key_symbol, key_symbol, key_symbol)
+3. all encrypt or decrypt result will write to system Clipboard, So easy!!
+`, en_symbol, key_symbol, key_symbol)
 
 	listenClipboard(context.Background())
 
@@ -64,38 +58,23 @@ func listenClipboard(ctx context.Context) {
 				//去掉前后空白
 				content = strings.TrimSpace(content)
 
-				//如果剪贴板中的内容是上一次加密或者解密写入的，那么不做任何处理
-				if current == content {
-					continue
-				}
-
-				//加密流程：如果开头是en_symbol号，说明文本需要加密
-				if strings.HasPrefix(content, en_symbol) {
-					newcontent := EncryptByTime(content[1:])
-					err := clipboard.WriteAll(newcontent)
-					if err != nil {
-						panic(err)
-					}
-				}
-				//解密流程
-				//如果开头是de_symbol号，说明内容需要解密
-				//并且密文内容结构应该是 de_symbol+32位的md5字符串:密文:原文MD5
-				//如果是输入密码的密文，解密内容尾部会有一个 key_symbol 号，如果有，也不执行解密，需要等待输入密码在key_symbol之后
-				if strings.HasPrefix(content, de_symbol) && !strings.HasSuffix(content, key_symbol) {
-					content = content[1:]             //去掉？号
-					cs := strings.Split(content, ":") //用：分割
-					if len(cs) != 3 {
-						continue
-					}
-					if cs[0] != MD5(cs[1]) {
-						continue
+				switch {
+				case content[:1] == en_symbol && !strings.HasSuffix(content, key_symbol) && strings.Index(content, key_symbol) > 0:
+					if newcontent := EncryptByKey(content); newcontent != "" {
+						err := clipboard.WriteAll(newcontent)
+						if err != nil {
+							panic(err)
+						}
+						fmt.Println("Copied it")
 					}
 
-					//如果是输入密码的密文，这时候cs[2]是包含 =密码的，在函数内部会进行处理
-					newcontent := DecryptByTime(cs[1], cs[2])
-					err := clipboard.WriteAll(newcontent)
-					if err != nil {
-						panic(err)
+				case content[:1] == de_symbol && !strings.HasSuffix(content, key_symbol):
+					if newcontent := DecryptByKey(content); newcontent != "" {
+						err := clipboard.WriteAll(newcontent)
+						if err != nil {
+							panic(err)
+						}
+						fmt.Println("Copied it")
 					}
 
 				}
@@ -107,78 +86,61 @@ func listenClipboard(ctx context.Context) {
 
 }
 
-func EncryptByTime(v string) (r string) {
+func EncryptByKey(v string) (r string) {
 
-	//用时间作为键
-	fmt.Println("开始加密")
-	defer fmt.Println("加密完成")
-	//默认尾部空字符串，如果是密码模式，会在密文后面加上key_symbol
-	ks := ""
-	//默认的key是当前时间戳
-	k := fmt.Sprintf("%d", time.Now().Unix())
+	fmt.Println("Encrypting")
+	defer fmt.Println("over")
 
-	if _s := strings.Split(v, key_symbol); len(_s) > 1 && _s[len(_s)-1] != "" {
-		k = _s[len(_s)-1]
-		ks = key_symbol
-		v = strings.Join(_s[:len(_s)-1], key_symbol)
+	_s := strings.Split(v[1:], key_symbol)
+
+	if len(_s) < 2 || _s[len(_s)-1] == "" {
+		fmt.Println("no passwrod input")
+		return ""
 	}
 
-	r, err := EncryptByString(v, k)
+	r, err := EncryptByString(strings.Join(_s[:len(_s)-1], key_symbol), _s[len(_s)-1])
 	if err != nil {
 		return err.Error()
 	}
 
 	//如果是密码加密模式，会在尾部加上 key_symbol,否则为空字符串
-	r = fmt.Sprintf("%s%s:%s:%s%s", de_symbol, MD5(r), r, MD5(v), ks)
-	current = r
-	fmt.Println("加密并复制为:" + r)
+	r = fmt.Sprintf("%s%s:%s%s", de_symbol, r, MD5(strings.Join(_s[:len(_s)-1], key_symbol)), key_symbol)
+
+	fmt.Println("Encrypt to:" + r)
 	return
 }
 
-func DecryptByTime(v string, check string) (r string) {
+func DecryptByKey(v string) (r string) {
 
-	fmt.Println("开始解密")
-	defer fmt.Println("解密完成")
-	kint := time.Now().Unix()
-	var err error
+	fmt.Println("Decrypting...")
+	defer fmt.Println("over")
 
-	//用=分割check，无论是不是输入密码的密文，分割后的第一个元素是check字符串
-	_s := strings.Split(check, key_symbol)
-	check = _s[0]
+	_s := strings.Split(v[1:], ":") //用：分割
 
-	//如果分割后，=后面有值，也就是用密码解密模式，否则是用时间解密模式
-	if len(_s) > 1 && _s[1] != "" {
-		k := _s[1]
-		r, err = DecryptByString(v, k)
-		if err != nil {
-			return "密码错误"
-		}
-
-		if check == MD5(r) {
-			current = r
-			fmt.Println(k, "解密并复制为:", r)
-			return
-		}
-
-		return "内容验证错误"
-	} else {
-		for i := 0; i < times; i++ {
-
-			k := fmt.Sprintf("%d", kint-int64(i))
-			r, err = DecryptByString(v, k)
-			if err != nil {
-				continue
-			}
-
-			if check == MD5(r) {
-				current = r
-				fmt.Println(i, "解密并复制为:", r)
-				return
-			}
-		}
+	if len(_s) != 2 {
+		fmt.Println("no check string")
+		return ""
 	}
 
-	return "overtime"
+	_c := strings.Split(_s[1], key_symbol)
+	if len(_c) != 2 || _c[1] == "" {
+		fmt.Println("no passwrod input")
+		return ""
+	}
+
+	var err error
+
+	r, err = DecryptByString(_s[0], _c[1])
+	if err != nil {
+		return "Decrypt Error"
+	}
+
+	if _c[0] != MD5(r) {
+		return "check error"
+	}
+
+	fmt.Println("Decrypt to:", r)
+	return
 }
 
 func MD5(s string) string {

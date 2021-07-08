@@ -42,7 +42,7 @@ func listenClipboard(ctx context.Context) {
 
 	go func(ctx context.Context) {
 		for {
-			time.Sleep(1 * time.Second)
+			time.Sleep(2000 * time.Millisecond)
 
 			select {
 			case <-ctx.Done():
@@ -63,18 +63,22 @@ func listenClipboard(ctx context.Context) {
 					if newcontent := EncryptByKey(content); newcontent != "" {
 						err := clipboard.WriteAll(newcontent)
 						if err != nil {
-							panic(err)
+							fmt.Println(err)
+						} else {
+							fmt.Println("Copied it")
 						}
-						fmt.Println("Copied it")
+
 					}
 
 				case content[:1] == de_symbol && !strings.HasSuffix(content, key_symbol):
 					if newcontent := DecryptByKey(content); newcontent != "" {
 						err := clipboard.WriteAll(newcontent)
 						if err != nil {
-							panic(err)
+							fmt.Println(err)
+						} else {
+							fmt.Println("Copied it")
 						}
-						fmt.Println("Copied it")
+
 					}
 
 				}
